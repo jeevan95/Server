@@ -21,7 +21,9 @@ public class Server {
 	ArrayList<Table> tables = new ArrayList<>(); 
 	ArrayList<Waiter> waiters = new ArrayList<>(); 
 	Kitchen kitchen;
+	ArrayList<String> reqItemList = new ArrayList<>(); 
 
+	
 	public static void main(String[] args) {
 		Server server = new Server();
 
@@ -79,14 +81,23 @@ public class Server {
 		menuItems.add(i);
 		return menuItems;
 	}
+	public ArrayList<String> getReqItems(){
+		ArrayList<String> reqItems = new ArrayList<>();
+		reqItems.add("Water");
+		reqItems.add("Salt");
+		reqItems.add("Pepper");
+		reqItems.add("Ketchup");
+		reqItems.add("Salad");
+		reqItems.add("Bill");
+		return reqItems;
+	}
+	
 	public void startServer(){
 
 		isOnline = true;
-		Table t = new Table(1,2);
-		tables.add(t);
 		try {
 			svSock = new ServerSocket(3223);
-			
+
 			appendLog("Server Runing");
 			while (isOnline) {
 				Socket sock = svSock.accept();
@@ -100,7 +111,10 @@ public class Server {
 				case Request.NEW_CUSTOMER: 
 					String code = (String) re.getContent();
 					Table tabs = findTable(code);
+					appendLog("code "+code);
 					if(tabs==null){
+						appendLog("code not found "+code);
+
 						ouu.writeObject(new Request(Request.NEW_CUSTOMER, "Table id not found"));
 						ouu.flush();
 						ouu.reset();
@@ -117,23 +131,62 @@ public class Server {
 						appendLog("Customer connected");
 						appendLog("size "+tables.size());
 
-						//kitchen.send(new Request(Request.NEW_CUSTOMER,re.getContent()));
+
 						tabs.send(new Request(1,setupmenu()));
 						tabs.send(new Request(1,tabs.order));
+
 
 						tabs.new Listener().start();
 
 					}
 					break;
 				case Request.NEW_WAITER: 
-					cl = new Waiter(sock, inn, ouu);
-					waiters.add((Waiter) cl);
-					cl.new Listener().start();	
+					String uname = (String) re.getContent();
+					String pass = (String) re.getSecondContent();
+					Waiter waitr = findWaiter(uname);
+					if(waitr==null){
+						appendLog("wat not found ");
+
+						ouu.writeObject(new Request(Request.ERROR_MESSAGE, "ID is not recognised. Please try again"));
+						ouu.flush();
+						ouu.reset();
+
+					}
+					else if(!waitr.password.equals(pass))
+					{
+						appendLog("wat pas found ");
+
+						ouu.writeObject(new Request(Request.ERROR_MESSAGE, "Login details are incorrect. Please try again"));
+						ouu.flush();
+						ouu.reset();
+					}
+					else{
+						appendLog("wat found ");
+
+						waitr.setupStreams(sock, inn, ouu);
+						appendLog("Waiter connected");
+						appendLog("waiters size "+waiters.size());						
+						waitr.send(new Request(Request.INITIALIZE_WAITER,"Logged in succesfully"));
+
+						waitr.new Listener().start();
+
+					}
 					break;
 				case Request.KITCHEN_CONNECT: 
 					cl = new Kitchen(sock, inn, ouu);
 					kitchen = (Kitchen) cl;
-					cl.new Listener().start();
+					kitchen.new Listener().start();
+					tables.add(new Table(1,2,"asdasd"));
+					tables.add(new Table(2,2,"sad"));
+
+
+					Waiter w2 = new Waiter("Jack","jc","asdasd");
+					Waiter w3 = new Waiter("Mike","mc","sad");
+					waiters.add(w2);
+					waiters.add(w3);
+
+
+
 					break;
 				default: 
 					break;
@@ -194,6 +247,7 @@ public class Server {
 				return (Request) istrm.readObject();
 			} catch (ClassNotFoundException | IOException  e) {
 				//e.printStackTrace();
+				appendLog("reader disconnected");
 
 				isConnected=false;
 				if(this instanceof Table){
@@ -220,7 +274,9 @@ public class Server {
 			public void run(){
 				while(isConnected){
 					Request req = receive();
+
 					if(req!=null){
+
 						if(Client.this instanceof Waiter){
 							Waiter w = (Waiter)Client.this;
 							switch(req.getType()){
@@ -229,10 +285,72 @@ public class Server {
 								for (int i=0; i<order.size();i++) {
 									appendLog("New new order -- "+order.get(i).getQuantity()+" "+order.get(i).getName());
 								}
+								Table tb = findTable((String) req.getSecondContent());
+								if(tb!=null){
+									tb.order.addAll(order);
+									kitchen.send(new Request(Request.NEW_ORDER,tb.id,order));
+								}
+								break;
+							case Request.INITIALIZE_WAITER:
 
+								w.send(new Request(Request.MENU,setupmenu()));						
+								w.send(new Request(Request.TABLE_LIST,getTableNos()));						
+								w.send(new Request(Request.REQUESTABLE_ITEMS,getReqItems()));						
+								w.send(new Request(Request.TASK_LIST, reqItemList));
+								
+								break;
+
+							case Request.CUSTOMER_INFO:
+								Table t = findTablebyNum((String)req.getContent());
+								if(t!=null){
+									w.send(new Request(Request.CUSTOMER_INFO,t.order, t.id));
+
+								}
+								break;
+							case Request.CREATE_TABLE:
+								String tbnum = (String)req.getSecondContent();
+								Table tv = findTablebyNum(tbnum);
+								if(tv==null){
+									int tbgus = Integer.parseInt((String)req.getSecondContent());
+
+									tables.add(new Table(Integer.parseInt(tbnum),tbgus,"werrr"));
+									w.send(new Request(Request.TABLE_LIST, getTableNos()));
+								}
+								else
+									w.send(new Request(Request.ERROR_MESSAGE, "Table number already exists"));
+
+								break;
+							case Request.PROGRESS_UPDATE_WAITER:
+								String tbl = (String)req.getContent();
+								kitchen.send(new Request(Request.PROGRESS_UPDATE_WAITER,tbl,w.username));
+								System.out.println("tbl = "+tbl);
+
+								break;
+							case Request.REQUEST_ITEM:
+								String task = "Table "+(String)req.getContent()+ " requests "+(String)req.getSecondContent();
+								reqItemList.add(task);
+								w.send(new Request(Request.TASK_LIST, reqItemList));
+								
+								break;
+							case Request.REMOVE_TASK:
+								String donetask = (String)req.getContent();
+								ArrayList<String> newTasks = new ArrayList<>();
+								for(String tsk: reqItemList){
+									if(!tsk.equals(donetask)){
+										newTasks.add(tsk);
+									}
+								}
+								reqItemList = newTasks;
+								w.send(new Request(Request.TASK_LIST, reqItemList));
+								
+								break;
+							
 							}
-
+							
 						}
+
+
+
 						else if(Client.this instanceof Table){
 							Table w = (Table)Client.this;
 							switch(req.getType()){
@@ -242,27 +360,55 @@ public class Server {
 								for (int i=0; i<or.size();i++) {
 									appendLog("order -- "+or.get(i).getQuantity()+" "+or.get(i).getName());
 								}
-								//kitchen.send(new Request(Request.NEW_ORDER,tableno,or));
-
+								kitchen.send(new Request(Request.NEW_ORDER,w.id,or));
+								break;
+							case Request.PROGRESS_UPDATE_CUSTOMER:
+								kitchen.send(new Request(Request.PROGRESS_UPDATE_CUSTOMER,w.id));
+								break;
 							}
 						}
 						else {
 							Kitchen w = (Kitchen)Client.this;
 							switch(req.getType()){
-							case Request.NEW_ORDER:
-								appendLog("sss"+(int) req.getSecondContent());
-								//Customer t = findTable((int) req.getContent());
-								//t.send(new Request(Request.KITCHEN_CONNECT, req.getSecondContent()));
-							}
-						}
-						
-					}
 
+							case Request.PROGRESS_UPDATE_CUSTOMER:
+								Table t = findTable((String) req.getContent());
+								if(t!=null){
+									if(t.isConnected){
+
+										t.send(new Request(Request.PROGRESS_UPDATE_CUSTOMER, req.getSecondContent(),req.getThirdContent()));
+									}
+								}
+								//appendLog(" " +req.getSecondContent()+ " " + req.getThirdContent());
+
+								break;
+							case Request.PROGRESS_UPDATE_WAITER:
+								System.out.println("req frm kict to wait");
+								Waiter ww = findWaiter((String) req.getContent());
+								System.out.println("req frm kict to wait");
+								ww.send(new Request(Request.PROGRESS_UPDATE_WAITER, req.getSecondContent(),req.getThirdContent()));
+								appendLog(" " +req.getSecondContent()+ " " + req.getThirdContent());
+								break;
+							}
+
+						}
+					}
 				}
+
 			}
+
 		}
 	}
 
+
+
+	public ArrayList<String> getTableNos(){
+		ArrayList<String> tn = new ArrayList<>();
+		for (int i=0; i<tables.size();i++) {
+			tn.add(""+tables.get(i).tableno);
+		}
+		return tn;
+	}
 
 	public Table findTable(String id){
 		for (int i=0; i<tables.size();i++) {
@@ -272,7 +418,22 @@ public class Server {
 		}
 		return null;
 	}
-
+	public Table findTablebyNum(String id){
+		for (int i=0; i<tables.size();i++) {
+			if(String.valueOf(tables.get(i).tableno).equals(id)){
+				return tables.get(i);
+			}
+		}
+		return null;
+	}
+	public Waiter findWaiter(String id){
+		for (int i=0; i<waiters.size();i++) {
+			if(waiters.get(i).username.equals(id)){
+				return waiters.get(i);
+			}
+		}
+		return null;
+	}
 	public class Table extends Client{
 		int noguests;
 		int tableno;
@@ -287,14 +448,19 @@ public class Server {
 			istrm = is;
 
 			isConnected = true;
+
 		}
 
-		Table(int no, int noof){
+		Table(int no, int noof,String sdd){
 			this.noguests = noof;
 			this.tableno = no;
 			boolean t = true;
+			id=sdd;
+			kitchen.send(new Request(Request.NEW_CUSTOMER,id));
 			order = new ArrayList<>();
-
+			isConnected = false;
+			
+			/*
 			while(t){
 				id = getID();
 				t=false;
@@ -307,17 +473,17 @@ public class Server {
 				}
 
 			}
-
+			 */
 
 		}
-		
+
 		String getID(){
 			final String uuid = UUID.randomUUID().toString().replaceAll("-", "");
 			String iid = "";
 			for(int i = 3; i < uuid.length() ; i+=4) { 
 				iid = iid + uuid.charAt(i); 
 			}
-			return "asdasd";
+			return iid;
 		}
 		void setOccupied(boolean r){
 			isOccupied = r;
@@ -329,18 +495,35 @@ public class Server {
 
 	public class Waiter extends Client{
 
-		Waiter(Socket sc, ObjectInputStream is, ObjectOutputStream ouu ) throws IOException {
-			super(sc,is,ouu);
-			// TODO Auto-generated constructor stub
+		public String name;
+		public String username; 
+		public String password; 
+
+		void setupStreams(Socket sc, ObjectInputStream is, ObjectOutputStream ouu )  {
+			sock = sc;
+			ostrm = ouu;
+			istrm = is;
+
+			isConnected = true;
+
 		}
-		
+
+		Waiter(String nme, String un, String pass){
+			name = nme;
+			username = un;
+			password = pass;
+			isConnected = false;
+		}
+
+
 	}
 	public class Kitchen extends Client{
 		public String name = "sdsd";
 		Kitchen(Socket sc, ObjectInputStream is, ObjectOutputStream ouu ) throws IOException {
 			super(sc,is,ouu);
+			isConnected = true;
 			// TODO Auto-generated constructor stub
 		}
-		
+
 	}
 }
