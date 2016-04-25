@@ -19,7 +19,7 @@ public class Item implements Serializable {
     private double timefactor;
     private int category;
     private ArrayList<String> props;
-    public static int STARTER = 100, MAIN = 101, SIDE = 102, DESSERT = 103, DRINK = 104;
+    public static int STARTER = 0, MAIN = 1, SIDE = 2, DESSERT = 3, DRINK = 4, DEAL = 5;
 
 
     public Item(Item i ){
